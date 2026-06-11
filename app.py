@@ -758,36 +758,36 @@ with col2:
                     interval_text = f"{lower:.1f} – {upper:.1f} days"
                 except:
                     # Fallback if scipy not available or error
-                std_dev = 1.5  # average standard deviation from training
-                lower = max(0, predicted_los - 1.96 * std_dev)
-                upper = predicted_los + 1.96 * std_dev
-                interval_text = f"{lower:.1f} – {upper:.1f} days"
-            
-            # Recommend bed
-            bed_type = recommend_bed(predicted_los, selected_severity)
-            
-            # Calculate discharge date
-            discharge_date = datetime.now() + timedelta(days=int(round(predicted_los)))
-            
-            # Display results in a card
-            st.markdown('<div class="result-card">', unsafe_allow_html=True)
-            
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown('<div class="result-label">Predicted Length of Stay</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="result-value">{predicted_los:.1f} days</div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="opacity:0.8;">90% Interval: {interval_text}</div>', unsafe_allow_html=True)
-            with col_b:
-                st.markdown('<div class="result-label">Estimated Discharge</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="result-value">{discharge_date.strftime("%b %d, %Y")}</div>', unsafe_allow_html=True)
-            
-            st.markdown(f'<span class="bed-badge">🛏️ Recommended: {bed_type}</span>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-        except Exception as e:
-            st.error(f"Prediction error: {str(e)}")
-            st.info("Using historical averages instead.")
-            predicted_los = None
+                    std_dev = 1.5  # average standard deviation from training
+                    lower = max(0, predicted_los - 1.96 * std_dev)
+                    upper = predicted_los + 1.96 * std_dev
+                    interval_text = f"{lower:.1f} – {upper:.1f} days"
+                
+                # Recommend bed
+                bed_type = recommend_bed(predicted_los, selected_severity)
+                
+                # Calculate discharge date
+                discharge_date = datetime.now() + timedelta(days=int(round(predicted_los)))
+                
+                # Display results in a card
+                st.markdown('<div class="result-card">', unsafe_allow_html=True)
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.markdown('<div class="result-label">Predicted Length of Stay</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="result-value">{predicted_los:.1f} days</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="opacity:0.8;">90% Interval: {interval_text}</div>', unsafe_allow_html=True)
+                with col_b:
+                    st.markdown('<div class="result-label">Estimated Discharge</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="result-value">{discharge_date.strftime("%b %d, %Y")}</div>', unsafe_allow_html=True)
+                
+                st.markdown(f'<span class="bed-badge">🛏️ Recommended: {bed_type}</span>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+            except Exception as e:
+                st.error(f"Prediction error: {str(e)}")
+                st.info("Using historical averages instead.")
+                predicted_los = None
 
 # Historical Data Section
 if submit_button:
