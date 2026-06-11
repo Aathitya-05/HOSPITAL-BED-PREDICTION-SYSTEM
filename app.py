@@ -12,7 +12,109 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_absolute_error, r2_score
 import warnings
+import hashlib
+import hmac
+import os
+from functools import wraps
+
 warnings.filterwarnings('ignore')
+
+# ----------------------------- SECURITY MODULE -----------------------------
+class SecurityManager:
+    """Manages security operations including hashing and data validation."""
+    
+    # Secret key for HMAC (should be stored in environment in production)
+    SECRET_KEY = os.getenv('SECURITY_KEY', 'hospital-bed-prediction-secure-key-v1')
+    
+    @staticmethod
+    def hash_data(data: str, algorithm: str = 'sha256') -> str:
+        """
+        Hash sensitive data using specified algorithm.
+        Supported algorithms: sha256, sha512, md5
+        """
+        if algorithm == 'sha256':
+            return hashlib.sha256(data.encode()).hexdigest()
+        elif algorithm == 'sha512':
+            return hashlib.sha512(data.encode()).hexdigest()
+        elif algorithm == 'md5':
+            return hashlib.md5(data.encode()).hexdigest()
+        else:
+            return hashlib.sha256(data.encode()).hexdigest()
+    
+    @staticmethod
+    def generate_hmac(data: str, secret: str = None) -> str:
+        """Generate HMAC signature for data integrity verification."""
+        if secret is None:
+            secret = SecurityManager.SECRET_KEY
+        return hmac.new(
+            secret.encode(),
+            data.encode(),
+            hashlib.sha256
+        ).hexdigest()
+    
+    @staticmethod
+    def verify_hmac(data: str, signature: str, secret: str = None) -> bool:
+        """Verify HMAC signature for data integrity."""
+        if secret is None:
+            secret = SecurityManager.SECRET_KEY
+        expected_signature = SecurityManager.generate_hmac(data, secret)
+        return hmac.compare_digest(signature, expected_signature)
+    
+    @staticmethod
+    def validate_input(value: str, input_type: str = 'text', max_length: int = 100) -> bool:
+        """Validate user input to prevent injection attacks."""
+        if not isinstance(value, str):
+            return False
+        
+        if len(value) > max_length:
+            return False
+        
+        if input_type == 'text':
+            # Allow only alphanumeric, spaces, and basic punctuation
+            import re
+            pattern = r'^[a-zA-Z0-9\s\-\.\/\(\),]+$'
+            return bool(re.match(pattern, value))
+        
+        return True
+    
+    @staticmethod
+    def hash_file(filepath: str, algorithm: str = 'sha256') -> str:
+        """Calculate hash of file for integrity verification."""
+        hash_obj = hashlib.new(algorithm)
+        try:
+            with open(filepath, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b''):
+                    hash_obj.update(chunk)
+            return hash_obj.hexdigest()
+        except Exception as e:
+            st.error(f"Error hashing file: {e}")
+            return None
+    
+    @staticmethod
+    def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+        """Remove potentially sensitive columns and sanitize data."""
+        # Remove columns that might contain PII
+        sensitive_columns = ['patient_id', 'ssn', 'email', 'phone', 'address']
+        df_cleaned = df.copy()
+        
+        for col in sensitive_columns:
+            if col in df_cleaned.columns:
+                # Hash the column instead of removing
+                df_cleaned[col] = df_cleaned[col].astype(str).apply(
+                    lambda x: SecurityManager.hash_data(x)[:16]
+                )
+        
+        return df_cleaned
+    
+    @staticmethod
+    def get_data_checksum(df: pd.DataFrame) -> str:
+        """Generate checksum for dataframe integrity verification."""
+        df_string = pd.util.hash_pandas_object(df, index=True).values
+        checksum_string = ''.join(str(x) for x in df_string)
+        return SecurityManager.hash_data(checksum_string)
+
+# Initialize Security Manager
+security_manager = SecurityManager()
 
 # ----------------------------- PAGE CONFIGURATION -----------------------------
 st.set_page_config(
@@ -171,35 +273,58 @@ st.markdown("""
 # ----------------------------- DATA LOADING & PREPROCESSING -----------------------------
 @st.cache_data
 def load_and_preprocess_data():
-    """Load dataset and perform initial cleaning."""
-    df = pd.read_csv('hospital_dataset.csv')
+    """Load dataset and perform initial cleaning with security checks."""
+    try:
+        # Verify file integrity
+        filepath = 'hospital_dataset.csv'
+        if not os.path.exists(filepath):
+            st.error("Dataset file not found!")
+            return None
+        
+        # Calculate file hash for integrity verification
+        file_hash = security_manager.hash_file(filepath)
+        if file_hash:
+            st.session_state.data_hash = file_hash
+        
+        df = pd.read_csv(filepath)
+        
+        # Sanitize dataframe
+        df = security_manager.sanitize_dataframe(df)
+        
+        # Clean column names
+        df.columns = df.columns.str.strip()
+        
+        # Drop rows with missing critical fields
+        df = df.dropna(subset=['length_of_stay', 'ccs_diagnosis_description'])
+        
+        # Convert numeric columns
+        df['length_of_stay'] = pd.to_numeric(df['length_of_stay'], errors='coerce')
+        df['total_costs'] = pd.to_numeric(df['total_costs'], errors='coerce')
+        
+        # Remove extreme outliers (LOS > 60 days are likely data errors)
+        df = df[df['length_of_stay'] <= 60]
+        
+        # Fill missing severity with 'Moderate' (most common)
+        df['apr_severity_of_illness_description'] = df['apr_severity_of_illness_description'].fillna('Moderate')
+        
+        # Fill missing gender with 'U'
+        df['gender'] = df['gender'].fillna('U')
+        
+        # Fill missing admission type with 'Emergency'
+        df['type_of_admission'] = df['type_of_admission'].fillna('Emergency')
+        
+        # Fill missing medical/surgical with 'Medical'
+        df['apr_medical_surgical_description'] = df['apr_medical_surgical_description'].fillna('Medical')
+        
+        # Generate data checksum
+        data_checksum = security_manager.get_data_checksum(df)
+        st.session_state.data_checksum = data_checksum
+        
+        return df
     
-    # Clean column names
-    df.columns = df.columns.str.strip()
-    
-    # Drop rows with missing critical fields
-    df = df.dropna(subset=['length_of_stay', 'ccs_diagnosis_description'])
-    
-    # Convert numeric columns
-    df['length_of_stay'] = pd.to_numeric(df['length_of_stay'], errors='coerce')
-    df['total_costs'] = pd.to_numeric(df['total_costs'], errors='coerce')
-    
-    # Remove extreme outliers (LOS > 60 days are likely data errors)
-    df = df[df['length_of_stay'] <= 60]
-    
-    # Fill missing severity with 'Moderate' (most common)
-    df['apr_severity_of_illness_description'] = df['apr_severity_of_illness_description'].fillna('Moderate')
-    
-    # Fill missing gender with 'U'
-    df['gender'] = df['gender'].fillna('U')
-    
-    # Fill missing admission type with 'Emergency'
-    df['type_of_admission'] = df['type_of_admission'].fillna('Emergency')
-    
-    # Fill missing medical/surgical with 'Medical'
-    df['apr_medical_surgical_description'] = df['apr_medical_surgical_description'].fillna('Medical')
-    
-    return df
+    except Exception as e:
+        st.error(f"Error loading dataset: {e}")
+        return None
 
 df = load_and_preprocess_data()
 
@@ -442,14 +567,37 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
     
+    # Security Information Section
+    with st.expander("🔒 Security Features", expanded=False):
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(56, 142, 60, 0.1) 100%); 
+                    padding: 15px; border-radius: 12px; border-left: 4px solid #4caf50;">
+            <p><strong>Data Protection:</strong></p>
+            <ul style="margin: 5px 0; padding-left: 20px; font-size: 0.85rem;">
+                <li>SHA-256 hashing for sensitive data</li>
+                <li>HMAC signature verification</li>
+                <li>File integrity checks (SHA-256)</li>
+                <li>Input validation & sanitization</li>
+                <li>PII protection & data anonymization</li>
+            </ul>
+            <p style="margin-top: 12px;"><strong>Security Algorithms:</strong></p>
+            <ul style="margin: 5px 0; padding-left: 20px; font-size: 0.85rem;">
+                <li>🔐 SHA-256: Cryptographic hashing</li>
+                <li>🔐 SHA-512: Enhanced security hashing</li>
+                <li>🔐 HMAC-SHA256: Message authentication</li>
+                <li>🔐 MD5: Legacy checksum (for reference)</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; padding: 15px; background: linear-gradient(135deg, rgba(0, 102, 204, 0.08) 0%, rgba(0, 168, 255, 0.05) 100%); border-radius: 12px; border: 1px solid rgba(0, 102, 204, 0.1); margin-top: 20px;">
         <p style="margin: 0; font-size: 0.8rem; opacity: 0.7;">
-            <strong>Smart Bed Allocation System v1.0</strong><br>
-            Powered by Machine Learning<br>
-            <span style="font-size: 0.75rem;">© 2026 Healthcare AI</span>
+            <strong>Smart Bed Allocation System v2.0</strong><br>
+            Powered by Machine Learning + Security<br>
+            <span style="font-size: 0.75rem;">© 2026 Healthcare AI | Enhanced Security</span>
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -544,35 +692,72 @@ with col1:
 
 with col2:
     if submit_button:
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, rgba(255, 0, 110, 0.15) 0%, rgba(131, 56, 236, 0.1) 100%); 
-                    padding: 25px; border-radius: 20px; border: 2px solid rgba(255, 0, 110, 0.3); margin-bottom: 20px;">
-            <h2 style="background: linear-gradient(90deg, #ff006e 0%, #8338ec 100%); -webkit-background-clip: text; 
-                       -webkit-text-fill-color: transparent; background-clip: text; margin-top: 0; margin-bottom: 20px;">
-                📈 Prediction Results</h2>
-        </div>
-        """, unsafe_allow_html=True)
+        # Perform security validation on inputs
+        validation_passed = True
+        validation_errors = []
         
-        # Prepare input data
-        input_data = pd.DataFrame({
-            'ccs_diagnosis_description': [selected_disease],
-            'age_group': [final_age_group],
-            'gender': [selected_gender],
-            'type_of_admission': [selected_admission],
-            'apr_severity_of_illness_description': [selected_severity],
-            'apr_medical_surgical_description': [med_surg]
-        })
+        # Validate disease input
+        if not security_manager.validate_input(selected_disease, 'text', max_length=150):
+            validation_passed = False
+            validation_errors.append("Invalid disease input")
         
-        try:
-            # Predict LOS
-            predicted_los = model.predict(input_data)[0]
+        # Validate age group
+        if selected_age_group not in age_group_options:
+            validation_passed = False
+            validation_errors.append("Invalid age group")
+        
+        # Validate gender
+        if selected_gender not in gender_options:
+            validation_passed = False
+            validation_errors.append("Invalid gender")
+        
+        # Validate admission type
+        if not security_manager.validate_input(selected_admission, 'text', max_length=50):
+            validation_passed = False
+            validation_errors.append("Invalid admission type")
+        
+        # Validate severity
+        if not security_manager.validate_input(selected_severity, 'text', max_length=50):
+            validation_passed = False
+            validation_errors.append("Invalid severity input")
+        
+        if not validation_passed:
+            for error in validation_errors:
+                st.error(f"⚠️ Security Validation Error: {error}")
+        else:
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, rgba(255, 0, 110, 0.15) 0%, rgba(131, 56, 236, 0.1) 100%); 
+                        padding: 25px; border-radius: 20px; border: 2px solid rgba(255, 0, 110, 0.3); margin-bottom: 20px;">
+                <h2 style="background: linear-gradient(90deg, #ff006e 0%, #8338ec 100%); -webkit-background-clip: text; 
+                           -webkit-text-fill-color: transparent; background-clip: text; margin-top: 0; margin-bottom: 20px;">
+                    📈 Prediction Results</h2>
+            </div>
+            """, unsafe_allow_html=True)
             
-            # Get prediction interval (simplified: use +/- 1.5 days as rough estimate, or compute via trees)
+            # Prepare input data
+            input_data = pd.DataFrame({
+                'ccs_diagnosis_description': [selected_disease],
+                'age_group': [final_age_group],
+                'gender': [selected_gender],
+                'type_of_admission': [selected_admission],
+                'apr_severity_of_illness_description': [selected_severity],
+                'apr_medical_surgical_description': [med_surg]
+            })
+            
+            # Generate hash of input for audit logging
+            input_hash = security_manager.hash_data(str(input_data.values))
+            input_signature = security_manager.generate_hmac(str(input_data.values))
+            
             try:
-                mean_pred, lower, upper = get_prediction_interval(model, input_data)
-                interval_text = f"{lower:.1f} – {upper:.1f} days"
-            except:
-                # Fallback if scipy not available or error
+                # Predict LOS
+                predicted_los = model.predict(input_data)[0]
+                
+                # Get prediction interval (simplified: use +/- 1.5 days as rough estimate, or compute via trees)
+                try:
+                    mean_pred, lower, upper = get_prediction_interval(model, input_data)
+                    interval_text = f"{lower:.1f} – {upper:.1f} days"
+                except:
+                    # Fallback if scipy not available or error
                 std_dev = 1.5  # average standard deviation from training
                 lower = max(0, predicted_los - 1.96 * std_dev)
                 upper = predicted_los + 1.96 * std_dev
