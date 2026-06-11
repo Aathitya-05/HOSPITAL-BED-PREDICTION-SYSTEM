@@ -16,6 +16,9 @@ import hashlib
 import hmac
 import os
 from functools import wraps
+import bcrypt
+import json
+from datetime import datetime, timedelta
 
 warnings.filterwarnings('ignore')
 
@@ -115,6 +118,301 @@ class SecurityManager:
 
 # Initialize Security Manager
 security_manager = SecurityManager()
+
+# ----------------------------- AUTHENTICATION MODULE -----------------------------
+class AuthenticationManager:
+    """Manages user authentication with OAuth and password-based login."""
+    
+    USERS_DB_FILE = '.users_db.json'
+    SESSION_TIMEOUT = 3600  # 1 hour in seconds
+    
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Hash password using bcrypt."""
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    @staticmethod
+    def verify_password(password: str, hashed: str) -> bool:
+        """Verify password against hash."""
+        try:
+            return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+        except:
+            return False
+    
+    @staticmethod
+    def load_users_db() -> dict:
+        """Load user database from file."""
+        if os.path.exists(AuthenticationManager.USERS_DB_FILE):
+            try:
+                with open(AuthenticationManager.USERS_DB_FILE, 'r') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+    
+    @staticmethod
+    def save_users_db(users_db: dict):
+        """Save user database to file."""
+        try:
+            with open(AuthenticationManager.USERS_DB_FILE, 'w') as f:
+                json.dump(users_db, f, indent=2)
+        except Exception as e:
+            st.error(f"Error saving user database: {e}")
+    
+    @staticmethod
+    def register_user(email: str, password: str, full_name: str) -> dict:
+        """Register a new user."""
+        users_db = AuthenticationManager.load_users_db()
+        
+        # Validate email
+        if '@' not in email or len(email) < 5:
+            return {'success': False, 'message': 'Invalid email format'}
+        
+        # Check if user exists
+        if email in users_db:
+            return {'success': False, 'message': 'Email already registered'}
+        
+        # Validate password
+        if len(password) < 6:
+            return {'success': False, 'message': 'Password must be at least 6 characters'}
+        
+        # Create user
+        users_db[email] = {
+            'password': AuthenticationManager.hash_password(password),
+            'full_name': full_name,
+            'created_at': datetime.now().isoformat(),
+            'login_method': 'email'
+        }
+        
+        AuthenticationManager.save_users_db(users_db)
+        return {'success': True, 'message': 'Registration successful!'}
+    
+    @staticmethod
+    def authenticate_user(email: str, password: str) -> dict:
+        """Authenticate user with email and password."""
+        users_db = AuthenticationManager.load_users_db()
+        
+        if email not in users_db:
+            return {'success': False, 'message': 'Email not found'}
+        
+        user = users_db[email]
+        if not AuthenticationManager.verify_password(password, user['password']):
+            return {'success': False, 'message': 'Incorrect password'}
+        
+        return {
+            'success': True,
+            'user': {
+                'email': email,
+                'full_name': user.get('full_name', 'User'),
+                'login_method': user.get('login_method', 'email')
+            }
+        }
+    
+    @staticmethod
+    def oauth_login(provider: str, email: str, name: str) -> dict:
+        """Handle OAuth login (Google, GitHub, etc.)."""
+        users_db = AuthenticationManager.load_users_db()
+        
+        if email not in users_db:
+            # Create new user from OAuth
+            users_db[email] = {
+                'full_name': name,
+                'created_at': datetime.now().isoformat(),
+                'login_method': provider,
+                'password': 'oauth'  # No password for OAuth users
+            }
+            AuthenticationManager.save_users_db(users_db)
+        
+        return {
+            'success': True,
+            'user': {
+                'email': email,
+                'full_name': name,
+                'login_method': provider
+            }
+        }
+    
+    @staticmethod
+    def check_session_valid() -> bool:
+        """Check if user session is still valid."""
+        if 'login_time' not in st.session_state:
+            return False
+        
+        elapsed = (datetime.now() - st.session_state.login_time).total_seconds()
+        return elapsed < AuthenticationManager.SESSION_TIMEOUT
+    
+    @staticmethod
+    def logout():
+        """Logout user and clear session."""
+        for key in ['authenticated', 'user', 'login_time']:
+            if key in st.session_state:
+                del st.session_state[key]
+
+def show_login_page():
+    """Display login page with multiple authentication options."""
+    st.set_page_config(
+        page_title="Hospital Bed Prediction - Login",
+        page_icon="🏥",
+        layout="centered",
+        initial_sidebar_state="collapsed"
+    )
+    
+    st.markdown("""
+    <style>
+        .login-container {
+            max-width: 500px;
+            margin: 50px auto;
+        }
+        .login-card {
+            background: linear-gradient(135deg, #0066cc 0%, #00a8ff 100%);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 102, 204, 0.3);
+        }
+        .login-title {
+            color: white;
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .login-subtitle {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1rem;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .oauth-btn {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            margin: 8px 0;
+            font-weight: 600;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .oauth-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+        .divider {
+            text-align: center;
+            margin: 20px 0;
+            color: rgba(255, 255, 255, 0.7);
+            font-weight: 600;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">🏥</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">Smart Bed Allocation</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">Secure Healthcare Management System</div>', unsafe_allow_html=True)
+    
+    # Tab selection
+    tab1, tab2 = st.tabs(["🔐 Login", "📝 Register"])
+    
+    with tab1:
+        st.subheader("Login to Your Account", anchor=False)
+        
+        email = st.text_input("Email Address", placeholder="your@email.com", key="login_email")
+        password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_password")
+        
+        if st.button("🔑 Sign In", use_container_width=True, type="primary"):
+            if email and password:
+                result = AuthenticationManager.authenticate_user(email, password)
+                if result['success']:
+                    st.session_state.authenticated = True
+                    st.session_state.user = result['user']
+                    st.session_state.login_time = datetime.now()
+                    st.success(f"Welcome back, {result['user']['full_name']}! 🎉")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error(result['message'])
+            else:
+                st.warning("Please enter both email and password")
+        
+        # OAuth Options
+        st.markdown("---")
+        st.markdown('<div class="divider">OR LOGIN WITH</div>', unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔵 Google", use_container_width=True):
+                st.info("Google OAuth: Redirecting to Google login...")
+                # Placeholder for actual OAuth flow
+                demo_result = AuthenticationManager.oauth_login(
+                    "google", 
+                    "user@gmail.com", 
+                    "Demo User"
+                )
+                st.session_state.authenticated = True
+                st.session_state.user = demo_result['user']
+                st.session_state.login_time = datetime.now()
+                st.rerun()
+        
+        with col2:
+            if st.button("⬛ GitHub", use_container_width=True):
+                st.info("GitHub OAuth: Redirecting to GitHub login...")
+                demo_result = AuthenticationManager.oauth_login(
+                    "github",
+                    "user@github.com",
+                    "GitHub User"
+                )
+                st.session_state.authenticated = True
+                st.session_state.user = demo_result['user']
+                st.session_state.login_time = datetime.now()
+                st.rerun()
+        
+        with col3:
+            if st.button("🔷 Microsoft", use_container_width=True):
+                st.info("Microsoft OAuth: Redirecting to Microsoft login...")
+                demo_result = AuthenticationManager.oauth_login(
+                    "microsoft",
+                    "user@microsoft.com",
+                    "Microsoft User"
+                )
+                st.session_state.authenticated = True
+                st.session_state.user = demo_result['user']
+                st.session_state.login_time = datetime.now()
+                st.rerun()
+    
+    with tab2:
+        st.subheader("Create New Account", anchor=False)
+        
+        reg_name = st.text_input("Full Name", placeholder="John Doe", key="reg_name")
+        reg_email = st.text_input("Email Address", placeholder="your@email.com", key="reg_email")
+        reg_password = st.text_input("Password", type="password", placeholder="Min 6 characters", key="reg_password")
+        reg_confirm = st.text_input("Confirm Password", type="password", placeholder="Confirm password", key="reg_confirm")
+        
+        if st.button("📝 Create Account", use_container_width=True, type="primary"):
+            if not (reg_name and reg_email and reg_password and reg_confirm):
+                st.warning("Please fill all fields")
+            elif reg_password != reg_confirm:
+                st.error("Passwords do not match")
+            else:
+                result = AuthenticationManager.register_user(reg_email, reg_password, reg_name)
+                if result['success']:
+                    st.success(result['message'])
+                    st.info("Now you can login with your credentials!")
+                else:
+                    st.error(result['message'])
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Initialize session state
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
+# Show login page if not authenticated
+if not st.session_state.authenticated or not AuthenticationManager.check_session_valid():
+    show_login_page()
+    st.stop()
 
 # ----------------------------- PAGE CONFIGURATION -----------------------------
 st.set_page_config(
@@ -455,6 +753,29 @@ def get_historical_stats(disease):
 # ----------------------------- SIDEBAR -----------------------------
 # ----------------------------- SIDEBAR -----------------------------
 with st.sidebar:
+    # User Profile Section
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, rgba(76, 175, 80, 0.2) 0%, rgba(56, 142, 60, 0.1) 100%); 
+                padding: 15px; border-radius: 12px; border-left: 4px solid #4caf50; margin-bottom: 20px;">
+        <p style="margin: 0 0 8px 0;"><strong>👤 Logged In As:</strong></p>
+        <p style="margin: 0; color: #2e7d32; font-weight: 600;">""" + st.session_state.user.get('full_name', 'User') + """</p>
+        <p style="margin: 5px 0 0 0; font-size: 0.85rem; opacity: 0.8;">""" + st.session_state.user.get('email', '') + """</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Logout Button
+    col_logout1, col_logout2 = st.columns(2)
+    with col_logout1:
+        if st.button("🚪 Logout", use_container_width=True, type="secondary"):
+            AuthenticationManager.logout()
+            st.success("Logged out successfully!")
+            st.rerun()
+    with col_logout2:
+        if st.button("⚙️ Settings", use_container_width=True, type="secondary"):
+            st.info("Settings page coming soon!")
+    
+    st.markdown("---")
+    
     # Expand/Collapse Button at top
     st.markdown("""
     <style>

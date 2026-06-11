@@ -4,3 +4,6 @@ numpy==2.3.5
 plotly==6.6.0
 scikit-learn==1.8.0
 scipy==1.16.3
+bcrypt==4.1.2
+PyJWT==2.8.1
+requests==2.31.0
