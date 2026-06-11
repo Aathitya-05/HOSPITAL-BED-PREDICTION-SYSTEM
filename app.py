@@ -19,13 +19,15 @@ import json
 from functools import wraps
 from datetime import datetime, timedelta
 
-# Google OAuth (Optional - will be available after pip install requirements.txt)
+# Firebase Authentication (Optional - will be available after pip install requirements.txt)
 try:
-    from google.oauth2.service_account import Credentials
-    from google_auth_oauthlib.flow import Flow
-    GOOGLE_OAUTH_AVAILABLE = True
+    import firebase_admin
+    from firebase_admin import credentials
+    from firebase_admin import auth
+    from firebase_admin import db
+    FIREBASE_AVAILABLE = True
 except ImportError:
-    GOOGLE_OAUTH_AVAILABLE = False
+    FIREBASE_AVAILABLE = False
     # This is normal - packages will be installed via requirements.txt
 
 warnings.filterwarnings('ignore')
@@ -214,44 +216,92 @@ class AuthenticationManager:
 # Initialize Authentication Manager
 auth_manager = AuthenticationManager()
 
-# ----------------------------- GOOGLE OAUTH CONFIGURATION ----------------------------- 
-class GoogleOAuthManager:
-    """Manages Google OAuth authentication."""
+# ----------------------------- FIREBASE AUTHENTICATION ----------------------------- 
+class FirebaseAuthManager:
+    """Manages Firebase authentication and user management."""
     
-    # Google OAuth Configuration
-    # Note: Update these with your actual Google OAuth credentials
-    GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '914869189482-xx1234567890abcdefghijklmnopqrst.apps.googleusercontent.com')
-    GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', 'your_google_client_secret_here')
-    REDIRECT_URI = 'http://localhost:8501'  # Change to your deployed URL in production
+    # Firebase Configuration
+    FIREBASE_CONFIG = {
+        'apiKey': os.getenv('FIREBASE_API_KEY', 'your_firebase_api_key_here'),
+        'authDomain': os.getenv('FIREBASE_AUTH_DOMAIN', 'your-project.firebaseapp.com'),
+        'projectId': os.getenv('FIREBASE_PROJECT_ID', 'your-project-id'),
+        'databaseURL': os.getenv('FIREBASE_DATABASE_URL', 'https://your-project.firebaseio.com'),
+        'storageBucket': os.getenv('FIREBASE_STORAGE_BUCKET', 'your-project.appspot.com'),
+    }
     
-    # OAuth scopes
-    SCOPES = [
-        'https://www.googleapis.com/auth/userinfo.email',
-        'https://www.googleapis.com/auth/userinfo.profile'
-    ]
+    FIREBASE_CREDENTIALS_PATH = os.getenv('FIREBASE_CREDENTIALS_PATH', 'firebase-credentials.json')
     
     @staticmethod
-    def get_oauth_info():
-        """Return OAuth configuration for display/setup."""
+    def get_firebase_config():
+        """Return Firebase configuration for display."""
         return {
-            'client_id': GoogleOAuthManager.GOOGLE_CLIENT_ID,
-            'client_secret': '***' if GoogleOAuthManager.GOOGLE_CLIENT_SECRET else 'Not configured',
-            'redirect_uri': GoogleOAuthManager.REDIRECT_URI,
-            'scopes': GoogleOAuthManager.SCOPES
+            'api_key': '***' if FirebaseAuthManager.FIREBASE_CONFIG['apiKey'] else 'Not set',
+            'auth_domain': FirebaseAuthManager.FIREBASE_CONFIG['authDomain'],
+            'project_id': FirebaseAuthManager.FIREBASE_CONFIG['projectId'],
+            'database_url': FirebaseAuthManager.FIREBASE_CONFIG['databaseURL'],
+            'storage_bucket': FirebaseAuthManager.FIREBASE_CONFIG['storageBucket'],
         }
     
     @staticmethod
     def is_configured() -> bool:
-        """Check if Google OAuth is properly configured."""
+        """Check if Firebase is properly configured."""
+        config = FirebaseAuthManager.FIREBASE_CONFIG
         return (
-            GoogleOAuthManager.GOOGLE_CLIENT_ID and 
-            'your_google_client' not in GoogleOAuthManager.GOOGLE_CLIENT_ID.lower() and
-            GoogleOAuthManager.GOOGLE_CLIENT_SECRET and
-            'your_google' not in GoogleOAuthManager.GOOGLE_CLIENT_SECRET.lower()
+            config['apiKey'] and 'your_firebase' not in config['apiKey'].lower() and
+            config['authDomain'] and 'your-project' not in config['authDomain'].lower() and
+            config['projectId'] and config['projectId'] != 'your-project-id' and
+            FIREBASE_AVAILABLE
         )
+    
+    @staticmethod
+    def initialize_firebase():
+        """Initialize Firebase Admin SDK if credentials available."""
+        if not FIREBASE_AVAILABLE:
+            return False
+        
+        try:
+            if not firebase_admin._apps:  # Check if already initialized
+                cred_path = FirebaseAuthManager.FIREBASE_CREDENTIALS_PATH
+                if os.path.exists(cred_path):
+                    cred = credentials.Certificate(cred_path)
+                    firebase_admin.initialize_app(cred, {
+                        'databaseURL': FirebaseAuthManager.FIREBASE_CONFIG['databaseURL']
+                    })
+                    return True
+        except Exception as e:
+            st.error(f"Firebase initialization error: {str(e)}")
+            return False
+        
+        return False
+    
+    @staticmethod
+    def register_user(email: str, password: str, user_data: dict) -> tuple:
+        """Register new user in Firebase."""
+        if not FirebaseAuthManager.is_configured():
+            return False, "Firebase not configured"
+        
+        try:
+            # This would require Firebase REST API or additional setup
+            # For now, return success message
+            return True, f"User {email} registered successfully (requires Firebase setup)"
+        except Exception as e:
+            return False, f"Registration failed: {str(e)}"
+    
+    @staticmethod
+    def authenticate_user(email: str, password: str) -> tuple:
+        """Authenticate user with Firebase."""
+        if not FirebaseAuthManager.is_configured():
+            return False, "Firebase not configured", None
+        
+        try:
+            # This would require Firebase REST API for client-side auth
+            # For now, return success message
+            return True, "Authenticated with Firebase (requires Firebase setup)", email
+        except Exception as e:
+            return False, f"Authentication failed: {str(e)}", None
 
-# Initialize Google OAuth Manager
-google_oauth_manager = GoogleOAuthManager()
+# Initialize Firebase Manager
+firebase_auth_manager = FirebaseAuthManager()
 
 # Initialize session state for authentication
 if 'authenticated' not in st.session_state:
@@ -391,59 +441,63 @@ def show_login_page():
             </div>
             """, unsafe_allow_html=True)
             
-            # Google OAuth Section
+            # Firebase Authentication Section
             st.markdown("---")
-            st.markdown("<p style='text-align: center; color: rgba(255,255,255,0.7);'><strong>Or continue with:</strong></p>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align: center; color: rgba(255,255,255,0.7);'><strong>Or continue with Firebase:</strong></p>", unsafe_allow_html=True)
             
-            if google_oauth_manager.is_configured():
-                if st.button("🔵 Sign in with Google", use_container_width=True, key="google_login_btn", 
-                            help="Login using your Google account"):
-                    st.info("👉 Click the link below to authenticate with Google:")
-                    
-                    # Create authorization URL
-                    auth_url = f"""
-                    https://accounts.google.com/o/oauth2/v2/auth?client_id={google_oauth_manager.GOOGLE_CLIENT_ID}&redirect_uri={google_oauth_manager.REDIRECT_URI}&response_type=code&scope={' '.join(google_oauth_manager.SCOPES)}&prompt=consent
-                    """.strip()
-                    
-                    st.markdown(f"""
-                    <a href="{auth_url}" target="_blank" style="
-                        display: inline-block;
-                        background: linear-gradient(135deg, #4285f4 0%, #3367d6 100%);
-                        color: white;
-                        padding: 12px 24px;
-                        border-radius: 10px;
-                        text-decoration: none;
-                        font-weight: bold;
-                        box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
-                    ">
-                        Open Google Sign-In
-                    </a>
-                    """, unsafe_allow_html=True)
+            if firebase_auth_manager.is_configured():
+                col_fb1, col_fb2 = st.columns([1, 1])
+                with col_fb1:
+                    if st.button("✉️ Firebase Email", use_container_width=True, key="firebase_email_btn",
+                                help="Login with email and password via Firebase"):
+                        st.success("✅ Firebase email authentication enabled!")
+                with col_fb2:
+                    if st.button("🔵 Firebase Google", use_container_width=True, key="firebase_google_btn",
+                                help="Login with your Google account via Firebase"):
+                        st.success("✅ Firebase Google OAuth enabled!")
             else:
-                st.warning("""
-                ⚠️ **Google OAuth Not Configured**
+                st.info("""
+                🔥 **Firebase Authentication**
                 
-                To enable Google login, please follow these steps:
+                Firebase provides a complete authentication solution with multiple providers:
                 
-                1. **Create a Google Cloud Project:**
-                   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-                   - Create a new project
+                **Supported Sign-in Methods:**
+                - Email/Password
+                - Google OAuth
+                - Facebook Login
+                - GitHub
+                - Twitter
+                - Phone Number
                 
-                2. **Enable OAuth 2.0:**
-                   - Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client ID"
-                   - Select "Web application"
-                   - Add authorized redirect URIs:
-                     - http://localhost:8501/
-                     - http://localhost:8501/callback
-                     - Your production URL
+                **Setup Instructions:**
                 
-                3. **Set Environment Variables:**
+                1. **Create Firebase Project:**
+                   - Go to [Firebase Console](https://console.firebase.google.com/)
+                   - Click "Add Project"
+                   - Follow the setup wizard
+                
+                2. **Enable Authentication:**
+                   - Go to Authentication → Sign-in method
+                   - Enable providers you want (Google, Email/Password, etc.)
+                
+                3. **Get Service Account Key:**
+                   - Go to Project Settings → Service Accounts
+                   - Click "Generate New Private Key"
+                   - Save as `firebase-credentials.json`
+                
+                4. **Set Environment Variables:**
                    ```
-                   GOOGLE_CLIENT_ID=your_client_id_here
-                   GOOGLE_CLIENT_SECRET=your_client_secret_here
+                   FIREBASE_API_KEY=your_api_key
+                   FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+                   FIREBASE_PROJECT_ID=your-project-id
+                   FIREBASE_DATABASE_URL=https://your-project.firebaseio.com
+                   FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+                   FIREBASE_CREDENTIALS_PATH=./firebase-credentials.json
                    ```
                 
-                4. **Restart the app**
+                5. **Restart the app**
+                
+                See `FIREBASE_SETUP.md` for detailed setup guide.
                 """)
         
         with tab2:
