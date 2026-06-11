@@ -15,7 +15,18 @@ import warnings
 import hashlib
 import hmac
 import os
+import json
 from functools import wraps
+from datetime import datetime, timedelta
+
+# Google OAuth (Optional - will be available after pip install requirements.txt)
+try:
+    from google.oauth2.service_account import Credentials
+    from google_auth_oauthlib.flow import Flow
+    GOOGLE_OAUTH_AVAILABLE = True
+except ImportError:
+    GOOGLE_OAUTH_AVAILABLE = False
+    # This is normal - packages will be installed via requirements.txt
 
 warnings.filterwarnings('ignore')
 
@@ -203,6 +214,45 @@ class AuthenticationManager:
 # Initialize Authentication Manager
 auth_manager = AuthenticationManager()
 
+# ----------------------------- GOOGLE OAUTH CONFIGURATION ----------------------------- 
+class GoogleOAuthManager:
+    """Manages Google OAuth authentication."""
+    
+    # Google OAuth Configuration
+    # Note: Update these with your actual Google OAuth credentials
+    GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '914869189482-xx1234567890abcdefghijklmnopqrst.apps.googleusercontent.com')
+    GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', 'your_google_client_secret_here')
+    REDIRECT_URI = 'http://localhost:8501'  # Change to your deployed URL in production
+    
+    # OAuth scopes
+    SCOPES = [
+        'https://www.googleapis.com/auth/userinfo.email',
+        'https://www.googleapis.com/auth/userinfo.profile'
+    ]
+    
+    @staticmethod
+    def get_oauth_info():
+        """Return OAuth configuration for display/setup."""
+        return {
+            'client_id': GoogleOAuthManager.GOOGLE_CLIENT_ID,
+            'client_secret': '***' if GoogleOAuthManager.GOOGLE_CLIENT_SECRET else 'Not configured',
+            'redirect_uri': GoogleOAuthManager.REDIRECT_URI,
+            'scopes': GoogleOAuthManager.SCOPES
+        }
+    
+    @staticmethod
+    def is_configured() -> bool:
+        """Check if Google OAuth is properly configured."""
+        return (
+            GoogleOAuthManager.GOOGLE_CLIENT_ID and 
+            'your_google_client' not in GoogleOAuthManager.GOOGLE_CLIENT_ID.lower() and
+            GoogleOAuthManager.GOOGLE_CLIENT_SECRET and
+            'your_google' not in GoogleOAuthManager.GOOGLE_CLIENT_SECRET.lower()
+        )
+
+# Initialize Google OAuth Manager
+google_oauth_manager = GoogleOAuthManager()
+
 # Initialize session state for authentication
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
@@ -340,6 +390,61 @@ def show_login_page():
                 Or click "Demo Login" to auto-login!
             </div>
             """, unsafe_allow_html=True)
+            
+            # Google OAuth Section
+            st.markdown("---")
+            st.markdown("<p style='text-align: center; color: rgba(255,255,255,0.7);'><strong>Or continue with:</strong></p>", unsafe_allow_html=True)
+            
+            if google_oauth_manager.is_configured():
+                if st.button("🔵 Sign in with Google", use_container_width=True, key="google_login_btn", 
+                            help="Login using your Google account"):
+                    st.info("👉 Click the link below to authenticate with Google:")
+                    
+                    # Create authorization URL
+                    auth_url = f"""
+                    https://accounts.google.com/o/oauth2/v2/auth?client_id={google_oauth_manager.GOOGLE_CLIENT_ID}&redirect_uri={google_oauth_manager.REDIRECT_URI}&response_type=code&scope={' '.join(google_oauth_manager.SCOPES)}&prompt=consent
+                    """.strip()
+                    
+                    st.markdown(f"""
+                    <a href="{auth_url}" target="_blank" style="
+                        display: inline-block;
+                        background: linear-gradient(135deg, #4285f4 0%, #3367d6 100%);
+                        color: white;
+                        padding: 12px 24px;
+                        border-radius: 10px;
+                        text-decoration: none;
+                        font-weight: bold;
+                        box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+                    ">
+                        Open Google Sign-In
+                    </a>
+                    """, unsafe_allow_html=True)
+            else:
+                st.warning("""
+                ⚠️ **Google OAuth Not Configured**
+                
+                To enable Google login, please follow these steps:
+                
+                1. **Create a Google Cloud Project:**
+                   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+                   - Create a new project
+                
+                2. **Enable OAuth 2.0:**
+                   - Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client ID"
+                   - Select "Web application"
+                   - Add authorized redirect URIs:
+                     - http://localhost:8501/
+                     - http://localhost:8501/callback
+                     - Your production URL
+                
+                3. **Set Environment Variables:**
+                   ```
+                   GOOGLE_CLIENT_ID=your_client_id_here
+                   GOOGLE_CLIENT_SECRET=your_client_secret_here
+                   ```
+                
+                4. **Restart the app**
+                """)
         
         with tab2:
             st.subheader("Create New Account")
