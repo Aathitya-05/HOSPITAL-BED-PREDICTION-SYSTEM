@@ -116,6 +116,285 @@ class SecurityManager:
 # Initialize Security Manager
 security_manager = SecurityManager()
 
+# ----------------------------- AUTHENTICATION MODULE -----------------------------
+class AuthenticationManager:
+    """Manages user authentication and session management."""
+    
+    # Demo credentials (in production, use a real database)
+    DEMO_USERS = {
+        'doctor@hospital.com': {
+            'password_hash': hashlib.sha256('doctor123'.encode()).hexdigest(),
+            'name': 'Dr. Smith',
+            'role': 'Doctor'
+        },
+        'admin@hospital.com': {
+            'password_hash': hashlib.sha256('admin123'.encode()).hexdigest(),
+            'name': 'Admin User',
+            'role': 'Administrator'
+        },
+        'nurse@hospital.com': {
+            'password_hash': hashlib.sha256('nurse123'.encode()).hexdigest(),
+            'name': 'Nurse Johnson',
+            'role': 'Nurse'
+        }
+    }
+    
+    @staticmethod
+    def validate_email(email: str) -> bool:
+        """Validate email format."""
+        import re
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        return bool(re.match(pattern, email))
+    
+    @staticmethod
+    def validate_password_strength(password: str) -> tuple[bool, str]:
+        """Validate password strength and return (valid, message)."""
+        if len(password) < 8:
+            return False, "Password must be at least 8 characters long"
+        
+        has_upper = any(c.isupper() for c in password)
+        has_lower = any(c.islower() for c in password)
+        has_digit = any(c.isdigit() for c in password)
+        
+        if not (has_upper and has_lower and has_digit):
+            return False, "Password must contain uppercase, lowercase, and numbers"
+        
+        return True, "Password is strong"
+    
+    @staticmethod
+    def authenticate_user(email: str, password: str) -> tuple[bool, str, str]:
+        """
+        Authenticate user with email and password.
+        Returns (success, message, user_name)
+        """
+        if email not in AuthenticationManager.DEMO_USERS:
+            return False, "User not found", ""
+        
+        user = AuthenticationManager.DEMO_USERS[email]
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        
+        if user['password_hash'] != password_hash:
+            return False, "Invalid password", ""
+        
+        return True, "Login successful", user['name']
+    
+    @staticmethod
+    def register_user(email: str, name: str, password: str) -> tuple[bool, str]:
+        """Register a new user."""
+        if not AuthenticationManager.validate_email(email):
+            return False, "Invalid email format"
+        
+        valid, msg = AuthenticationManager.validate_password_strength(password)
+        if not valid:
+            return False, msg
+        
+        if email in AuthenticationManager.DEMO_USERS:
+            return False, "Email already registered"
+        
+        # In production, save to database
+        AuthenticationManager.DEMO_USERS[email] = {
+            'password_hash': hashlib.sha256(password.encode()).hexdigest(),
+            'name': name,
+            'role': 'Doctor'
+        }
+        
+        return True, "Registration successful"
+
+# Initialize Authentication Manager
+auth_manager = AuthenticationManager()
+
+# Initialize session state for authentication
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.user_email = None
+    st.session_state.user_name = None
+    st.session_state.user_role = None
+    st.session_state.login_page = 'login'  # 'login' or 'register'
+    st.session_state.login_error = ""
+
+# ----------------------------- LOGIN PAGE UI FUNCTION -----------------------------
+def show_login_page():
+    """Display modern login/register page."""
+    # Page styling
+    st.markdown("""
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        .login-container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        .login-box {
+            background: linear-gradient(135deg, #1a3d5c 0%, #2d0a3d 50%, #1a1a3e 100%);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(255, 0, 110, 0.3);
+            border: 2px solid rgba(58, 134, 255, 0.3);
+            color: white;
+        }
+        
+        .login-title {
+            text-align: center;
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #ff006e 0%, #8338ec 25%, #3a86ff 50%, #06ffa5 75%, #ffbe0b 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+        
+        .login-subtitle {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 30px;
+            font-size: 1.1rem;
+        }
+        
+        .form-divider {
+            height: 3px;
+            background: linear-gradient(90deg, #ff006e 0%, #3a86ff 50%, #06ffa5 100%);
+            margin: 20px 0;
+            border-radius: 10px;
+        }
+        
+        .demo-credentials {
+            background: linear-gradient(135deg, rgba(255, 184, 11, 0.15) 0%, rgba(255, 184, 11, 0.05) 100%);
+            border-left: 5px solid #ffbe0b;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.9);
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Center the login box
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    
+    with col2:
+        st.markdown('<div class="login-box">', unsafe_allow_html=True)
+        
+        # Header
+        st.markdown('<div class="login-title">🏥 Hospital Bed Prediction</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-subtitle">Smart Bed Allocation System</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="form-divider"></div>', unsafe_allow_html=True)
+        
+        # Tab selection
+        tab1, tab2 = st.tabs(["🔓 Login", "📝 Register"])
+        
+        with tab1:
+            st.subheader("Login to Your Account")
+            
+            email = st.text_input(
+                "Email Address",
+                key="login_email",
+                placeholder="Enter your email"
+            )
+            
+            password = st.text_input(
+                "Password",
+                type="password",
+                key="login_password",
+                placeholder="Enter your password"
+            )
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("🔐 Login", use_container_width=True, key="login_btn"):
+                    if not email or not password:
+                        st.error("⚠️ Please enter both email and password")
+                    else:
+                        success, msg, user_name = auth_manager.authenticate_user(email, password)
+                        if success:
+                            st.session_state.authenticated = True
+                            st.session_state.user_email = email
+                            st.session_state.user_name = user_name
+                            st.session_state.user_role = auth_manager.DEMO_USERS[email].get('role', 'Doctor')
+                            st.success("✅ Login successful! Redirecting...")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+            
+            with col_b:
+                if st.button("👥 Demo Login", use_container_width=True, key="demo_btn"):
+                    # Auto-fill with demo credentials
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = "doctor@hospital.com"
+                    st.session_state.user_name = "Dr. Smith"
+                    st.session_state.user_role = "Doctor"
+                    st.success("✅ Demo login successful!")
+                    st.rerun()
+            
+            # Demo credentials info
+            st.markdown("""
+            <div class="demo-credentials">
+                <strong>📋 Demo Credentials:</strong><br>
+                📧 Email: doctor@hospital.com<br>
+                🔑 Password: doctor123<br>
+                <br>
+                Or click "Demo Login" to auto-login!
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with tab2:
+            st.subheader("Create New Account")
+            
+            name = st.text_input(
+                "Full Name",
+                key="register_name",
+                placeholder="Enter your full name"
+            )
+            
+            email_reg = st.text_input(
+                "Email Address",
+                key="register_email",
+                placeholder="Enter your email"
+            )
+            
+            password_reg = st.text_input(
+                "Password",
+                type="password",
+                key="register_password",
+                placeholder="Create a strong password"
+            )
+            
+            password_confirm = st.text_input(
+                "Confirm Password",
+                type="password",
+                key="register_confirm",
+                placeholder="Re-enter your password"
+            )
+            
+            if st.button("✍️ Create Account", use_container_width=True, key="register_btn"):
+                if not name or not email_reg or not password_reg:
+                    st.error("⚠️ Please fill in all fields")
+                elif password_reg != password_confirm:
+                    st.error("❌ Passwords do not match")
+                else:
+                    success, msg = auth_manager.register_user(email_reg, name, password_reg)
+                    if success:
+                        st.success("✅ Account created successfully! Please login.")
+                    else:
+                        st.error(f"❌ {msg}")
+            
+            # Password requirements
+            st.markdown("""
+            <div class="demo-credentials">
+                <strong>🔐 Password Requirements:</strong><br>
+                ✓ Minimum 8 characters<br>
+                ✓ Uppercase letters<br>
+                ✓ Lowercase letters<br>
+                ✓ Numbers<br>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
 # ----------------------------- PAGE CONFIGURATION -----------------------------
 st.set_page_config(
     page_title="Bed Allocation & LOS Predictor",
@@ -604,40 +883,59 @@ with st.sidebar:
     
 
 
-# ----------------------------- MAIN UI -----------------------------
-st.markdown('<div class="main-title">🏥 Smart Hospital Bed Allocation System</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Smart Predict Length of Stay & Recommend Bed Type</div>', unsafe_allow_html=True)
-
-# Colorful section divider
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-
-# Create two columns for input and results
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(58, 134, 255, 0.15) 0%, rgba(6, 255, 165, 0.1) 100%); 
-                padding: 25px; border-radius: 20px; border: 2px solid rgba(58, 134, 255, 0.3); margin-bottom: 20px;">
-        <h2 style="background: linear-gradient(90deg, #3a86ff 0%, #06ffa5 100%); -webkit-background-clip: text; 
-                   -webkit-text-fill-color: transparent; background-clip: text; margin-top: 0; margin-bottom: 20px;">
-            📋 Patient Information</h2>
-    </div>
-    """, unsafe_allow_html=True)
+# ----------------------------- MAIN UI LOGIC WITH AUTHENTICATION CHECK ---------------------
+# Check if user is authenticated
+if not st.session_state.authenticated:
+    show_login_page()
+else:
+    # Show logout button in sidebar
+    with st.sidebar:
+        st.markdown("---")
+        col_user, col_logout = st.columns([2, 1])
+        with col_user:
+            st.markdown(f"**👤 {st.session_state.user_name}**  \n📧 {st.session_state.user_email}")
+        with col_logout:
+            if st.button("🚪 Logout", key="logout_btn", help="Click to logout"):
+                st.session_state.authenticated = False
+                st.session_state.user_email = None
+                st.session_state.user_name = None
+                st.session_state.user_role = None
+                st.rerun()
     
-    with st.form(key='prediction_form'):
-        # Disease selection with colored container
+    # ----------------------- MAIN APPLICATION UI ----------------------
+    st.markdown('<div class="main-title">🏥 Smart Hospital Bed Allocation System</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">Smart Predict Length of Stay & Recommend Bed Type</div>', unsafe_allow_html=True)
+
+    # Colorful section divider
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    # Create two columns for input and results
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
         st.markdown("""
-        <div class="field-container">
-            <div class="field-label">🔬 Disease / Condition</div>
+        <div style="background: linear-gradient(135deg, rgba(58, 134, 255, 0.15) 0%, rgba(6, 255, 165, 0.1) 100%); 
+                    padding: 25px; border-radius: 20px; border: 2px solid rgba(58, 134, 255, 0.3); margin-bottom: 20px;">
+            <h2 style="background: linear-gradient(90deg, #3a86ff 0%, #06ffa5 100%); -webkit-background-clip: text; 
+                       -webkit-text-fill-color: transparent; background-clip: text; margin-top: 0; margin-bottom: 20px;">
+                📋 Patient Information</h2>
         </div>
         """, unsafe_allow_html=True)
-        disease_list = sorted(df['ccs_diagnosis_description'].unique().tolist())
-        selected_disease = st.selectbox(
-            "Disease / Condition",
-            options=disease_list,
-            help="Start typing to search for a disease",
-            label_visibility='collapsed'
-        )
+        
+        with st.form(key='prediction_form'):
+            # Disease selection with colored container
+            st.markdown("""
+            <div class="field-container">
+                <div class="field-label">🔬 Disease / Condition</div>
+            </div>
+            """, unsafe_allow_html=True)
+            disease_list = sorted(df['ccs_diagnosis_description'].unique().tolist())
+            selected_disease = st.selectbox(
+                "Disease / Condition",
+                options=disease_list,
+                help="Start typing to search for a disease",
+                label_visibility='collapsed'
+            )
         
         # Age input options with color
         st.markdown("""
